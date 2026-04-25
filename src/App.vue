@@ -20,6 +20,8 @@
           <button class="search-clear" v-if="searchQuery" @click="searchQuery = ''; applyFilters()">✕</button>
         </div>
 
+        <button class="btn-reset-stock" @click="resetStock" title="Restaurar stock original">↺</button>
+
         <button class="cart-btn" @click="cartOpen = true">
           🛒
           <span class="cart-badge" v-if="getCartTotal() > 0">{{ getCartTotal() }}</span>
@@ -69,9 +71,9 @@
             <p class="sidebar-price">${{ (product.price * (cart[product.id] || 0)).toFixed(2) }}</p>
           </div>
           <div class="sidebar-qty">
-            <button class="qty-btn" @click="removeFromCart(product)">−</button>
+            <button class="qty-btn" @click="removeFromSidebar(product)">−</button>
             <span>{{ cart[product.id] }}</span>
-            <button class="qty-btn" @click="addToCart(product)" :disabled="cart[product.id] >= product.stock">+</button>
+            <button class="qty-btn" @click="addFromSidebar(product)" :disabled="product.stock === 0">+</button>
           </div>
         </div>
       </div>
@@ -81,7 +83,7 @@
           <span>Total</span>
           <span>${{ getCartPrice() }}</span>
         </div>
-        <button class="btn-checkout">Generar factura</button>
+        <button class="btn-checkout" @click="abrirFactura">Generar factura</button>
       </div>
     </aside>
 
@@ -92,7 +94,12 @@
       <div class="productos">
         <div class="card" v-for="product in filteredProducts" :key="product.id">
 
-          <button class="btn-cart" @click="registerProduct(product)">🛒</button>
+          <button
+            class="btn-cart"
+            @click="sendToCart(product)"
+            :disabled="!selected[product.id] || selected[product.id] === 0 || product.stock === 0"
+            :class="selected[product.id] > 0 ? 'btn-cart-active' : ''"
+          >🛒</button>
 
           <div class="image-wrapper">
             <img :src="product.image" :alt="product.name" class="product-img" />
@@ -107,7 +114,7 @@
               :class="product.stock === 0 ? 'stock-out' : product.stock <= 5 ? 'stock-low' : 'stock-ok'"
             >
               <span class="stock-dot"></span>
-              <span v-if="product.stock === 0">Sin stock</span>
+              <span v-if="product.stock === 0">Agotado</span>
               <span v-else-if="product.stock <= 5">Solo {{ product.stock }} disponibles</span>
               <span v-else>{{ product.stock }} en stock</span>
             </div>
@@ -115,15 +122,13 @@
             <div class="price-row">
               <span class="price">${{ product.price.toFixed(2) }}</span>
 
-              <div class="quantity-controls" v-if="cart[product.id] > 0">
-                <button class="qty-btn" @click="removeFromCart(product)">−</button>
-                <span class="qty-count">{{ cart[product.id] }}</span>
-                <button class="qty-btn" @click="addToCart(product)" :disabled="cart[product.id] >= product.stock">+</button>
+              <div class="quantity-controls" v-if="product.stock > 0">
+                <button class="qty-btn" @click="decreaseSelected(product)" :disabled="!selected[product.id] || selected[product.id] === 0">−</button>
+                <span class="qty-count">{{ selected[product.id] || 0 }}</span>
+                <button class="qty-btn" @click="increaseSelected(product)" :disabled="(selected[product.id] || 0) >= product.stock">+</button>
               </div>
 
-              <button v-else class="btn-add" @click="addToCart(product)" :disabled="product.stock === 0">
-                {{ product.stock === 0 ? 'Sin stock' : 'Agregar' }}
-              </button>
+              <span v-else class="sin-stock-label">Agotado</span>
             </div>
           </div>
 
@@ -135,6 +140,132 @@
         </div>
       </div>
     </main>
+
+    <!-- ── FAB ───────────────────────────────────────────────── -->
+    <button class="fab" @click="modalOpen = true" title="Agregar producto">+</button>
+
+    <!-- ── MODAL AGREGAR PRODUCTO ────────────────────────────── -->
+    <div class="modal-overlay" v-if="modalOpen" @click.self="closeModal">
+      <div class="modal">
+        <div class="modal-header">
+          <h2>Nuevo producto</h2>
+          <button class="modal-close" @click="closeModal">✕</button>
+        </div>
+
+        <div class="modal-body">
+
+          <div class="field">
+            <label>Nombre *</label>
+            <input v-model="newProduct.name" type="text" placeholder="Ej: Pizza Hawaiana" />
+          </div>
+
+          <div class="field">
+            <label>Descripción *</label>
+            <textarea v-model="newProduct.description" placeholder="Describe el producto..." rows="3"></textarea>
+          </div>
+
+          <div class="field-row">
+            <div class="field">
+              <label>Precio * ($)</label>
+              <input v-model="newProduct.price" type="number" min="0" step="0.01" placeholder="0.00" />
+            </div>
+            <div class="field">
+              <label>Stock *</label>
+              <input v-model="newProduct.stock" type="number" min="0" step="1" placeholder="0" />
+            </div>
+          </div>
+
+          <div class="field">
+            <label>Categoría *</label>
+            <select v-model="newProduct.category">
+              <option value="" disabled>Selecciona una categoría</option>
+              <option v-for="cat in categories" :key="cat" :value="cat">{{ cat }}</option>
+              <option value="__nueva__">+ Nueva categoría</option>
+            </select>
+          </div>
+
+          <div class="field" v-if="newProduct.category === '__nueva__'">
+            <label>Nombre de la nueva categoría *</label>
+            <input v-model="newProduct.newCategory" type="text" placeholder="Ej: Wraps" />
+          </div>
+
+          <div class="field">
+            <label>URL de imagen *</label>
+            <input v-model="newProduct.image" type="text" placeholder="https://..." />
+            <div class="img-preview" v-if="newProduct.image">
+              <img :src="newProduct.image" alt="Preview" @error="newProduct.imageError = true" @load="newProduct.imageError = false" />
+              <p v-if="newProduct.imageError" class="img-error">URL de imagen no válida</p>
+            </div>
+          </div>
+
+          <p class="modal-error" v-if="modalError">{{ modalError }}</p>
+        </div>
+
+        <div class="modal-footer">
+          <button class="btn-cancel" @click="closeModal">Cancelar</button>
+          <button class="btn-save" @click="saveNewProduct">Agregar producto</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── MODAL FACTURA ─────────────────────────────────────── -->
+    <div class="modal-overlay" v-if="facturaOpen" @click.self="facturaOpen = false">
+      <div class="modal modal-factura">
+        <div class="modal-header">
+          <h2>Vista previa de factura</h2>
+          <button class="modal-close" @click="facturaOpen = false">✕</button>
+        </div>
+
+        <div class="modal-body factura-body">
+          <div class="factura" id="factura-preview">
+            <div class="factura-logo">
+              <img src="/logo.png" alt="FoodApp" />
+            </div>
+            <h1 class="factura-title">FoodApp</h1>
+            <p class="factura-sub">Factura de pedido</p>
+            <p class="factura-fecha">{{ facturaFecha }}</p>
+
+            <div class="factura-divider"></div>
+
+            <table class="factura-table">
+              <thead>
+                <tr>
+                  <th>Producto</th>
+                  <th>Cant.</th>
+                  <th>Precio</th>
+                  <th>Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="item in facturaItems" :key="item.id">
+                  <td>{{ item.name }}</td>
+                  <td class="center">{{ item.qty }}</td>
+                  <td class="right">${{ item.price.toFixed(2) }}</td>
+                  <td class="right">${{ (item.price * item.qty).toFixed(2) }}</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div class="factura-divider"></div>
+
+            <div class="factura-total-row">
+              <span>Total a pagar</span>
+              <span class="factura-total-valor">${{ getCartPrice() }}</span>
+            </div>
+
+            <p class="factura-gracias">¡Gracias por tu pedido! 🍽️</p>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button class="btn-cancel" @click="facturaOpen = false">Cerrar</button>
+          <button class="btn-save" @click="descargarFactura">⬇ Descargar PDF</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Toast de éxito -->
+    <div class="toast" v-if="toastVisible">✅ ¡Factura descargada correctamente!</div>
 
   </div>
 </template>
@@ -179,13 +310,198 @@ const defaultProducts = [
 
 // ── Estado — declarado PRIMERO para que todo lo de abajo pueda usarlo ─────────
 
-const products       = ref(loadProducts())
+const products        = ref(loadProducts())
 const filteredProducts = ref([...products.value])
-const cart           = ref({})
-const searchQuery    = ref('')
-const activeCategory = ref('')
-const cartOpen       = ref(false)
-const categories     = [...new Set(defaultProducts.map(p => p.category))]
+const cart            = ref({})
+const selected        = ref({})
+const searchQuery     = ref('')
+const activeCategory  = ref('')
+const cartOpen        = ref(false)
+const categories      = [...new Set(defaultProducts.map(p => p.category))]
+
+// ── Modal agregar producto ────────────────────────────────────────────────────
+
+const modalOpen  = ref(false)
+const modalError = ref('')
+
+function emptyProduct() {
+  return { name: '', description: '', price: '', stock: '', category: '', newCategory: '', image: '', imageError: false }
+}
+
+const newProduct = ref(emptyProduct())
+
+function closeModal() {
+  modalOpen.value  = false
+  modalError.value = ''
+  newProduct.value = emptyProduct()
+}
+
+// ── Factura ───────────────────────────────────────────────────────────────────
+
+const facturaOpen  = ref(false)
+const toastVisible = ref(false)
+const facturaFecha = ref('')
+const facturaItems = ref([])
+
+function abrirFactura() {
+  // Armar items del carrito
+  facturaItems.value = products.value
+    .filter(p => cart.value[p.id] > 0)
+    .map(p => ({ id: p.id, name: p.name, price: p.price, qty: cart.value[p.id] }))
+
+  // Fecha actual
+  const now = new Date()
+  facturaFecha.value = now.toLocaleDateString('es-CO', {
+    year: 'numeric', month: 'long', day: 'numeric',
+    hour: '2-digit', minute: '2-digit'
+  })
+
+  cartOpen.value   = false
+  facturaOpen.value = true
+}
+
+async function descargarFactura() {
+  // Cargar jsPDF desde CDN dinámicamente
+  if (!window.jspdf) {
+    await new Promise((resolve, reject) => {
+      const script = document.createElement('script')
+      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js'
+      script.onload = resolve
+      script.onerror = reject
+      document.head.appendChild(script)
+    })
+  }
+
+  const { jsPDF } = window.jspdf
+  const doc = new jsPDF({ unit: 'pt', format: 'a4' })
+
+  const verde    = [106, 191, 105]
+  const oscuro   = [26, 26, 26]
+  const gris     = [120, 120, 120]
+  const lineaY   = (n) => 100 + n * 22
+  const pageW    = doc.internal.pageSize.getWidth()
+
+  // Encabezado verde
+  doc.setFillColor(...verde)
+  doc.rect(0, 0, pageW, 70, 'F')
+
+  doc.setTextColor(255, 255, 255)
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(26)
+  doc.text('FoodApp', 40, 44)
+
+  doc.setFontSize(11)
+  doc.setFont('helvetica', 'normal')
+  doc.text('Factura de pedido', 40, 60)
+
+  // Fecha
+  doc.setTextColor(...gris)
+  doc.setFontSize(10)
+  doc.text(facturaFecha.value, pageW - 40, 44, { align: 'right' })
+
+  // Línea separadora
+  doc.setDrawColor(...verde)
+  doc.setLineWidth(1.5)
+  doc.line(40, 85, pageW - 40, 85)
+
+  // Encabezados tabla
+  doc.setFillColor(245, 245, 245)
+  doc.rect(40, 90, pageW - 80, 22, 'F')
+
+  doc.setTextColor(...oscuro)
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(10)
+  doc.text('Producto',    50,  106)
+  doc.text('Cant.',      340,  106, { align: 'center' })
+  doc.text('Precio',     430,  106, { align: 'right' })
+  doc.text('Total',  pageW - 50, 106, { align: 'right' })
+
+  // Filas
+  doc.setFont('helvetica', 'normal')
+  let y = 128
+  facturaItems.value.forEach((item, i) => {
+    if (i % 2 === 0) {
+      doc.setFillColor(252, 252, 252)
+      doc.rect(40, y - 14, pageW - 80, 20, 'F')
+    }
+    doc.setTextColor(...oscuro)
+    doc.setFontSize(10)
+    doc.text(item.name,                              50,  y)
+    doc.text(String(item.qty),                      340,  y, { align: 'center' })
+    doc.text(`$${item.price.toFixed(2)}`,           430,  y, { align: 'right' })
+    doc.text(`$${(item.price * item.qty).toFixed(2)}`, pageW - 50, y, { align: 'right' })
+    y += 22
+  })
+
+  // Línea total
+  y += 8
+  doc.setDrawColor(...verde)
+  doc.setLineWidth(1)
+  doc.line(40, y, pageW - 40, y)
+  y += 18
+
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(13)
+  doc.setTextColor(...verde)
+  doc.text('Total a pagar:', 50, y)
+  doc.text(`$${getCartPrice()}`, pageW - 50, y, { align: 'right' })
+
+  // Pie
+  y += 40
+  doc.setFont('helvetica', 'italic')
+  doc.setFontSize(10)
+  doc.setTextColor(...gris)
+  doc.text('¡Gracias por tu pedido! — FoodApp', pageW / 2, y, { align: 'center' })
+
+  doc.save(`factura-foodapp-${Date.now()}.pdf`)
+
+  // Toast y limpiar carrito
+  facturaOpen.value  = false
+  toastVisible.value = true
+  cart.value         = {}
+  selected.value     = {}
+  setTimeout(() => { toastVisible.value = false }, 3500)
+}
+
+function saveNewProduct() {
+  const p = newProduct.value
+
+  // Validación
+  if (!p.name.trim())        { modalError.value = 'El nombre es obligatorio.'; return }
+  if (!p.description.trim()) { modalError.value = 'La descripción es obligatoria.'; return }
+  if (!p.price || isNaN(p.price) || Number(p.price) < 0) { modalError.value = 'Ingresa un precio válido.'; return }
+  if (!p.stock || isNaN(p.stock) || Number(p.stock) < 0) { modalError.value = 'Ingresa un stock válido.'; return }
+  if (!p.category)           { modalError.value = 'Selecciona una categoría.'; return }
+  if (p.category === '__nueva__' && !p.newCategory.trim()) { modalError.value = 'Escribe el nombre de la nueva categoría.'; return }
+  if (!p.image.trim())       { modalError.value = 'La URL de imagen es obligatoria.'; return }
+  if (p.imageError)          { modalError.value = 'La URL de imagen no es válida.'; return }
+
+  const finalCategory = p.category === '__nueva__' ? p.newCategory.trim() : p.category
+
+  // Nuevo ID: máximo actual + 1
+  const maxId = products.value.reduce((max, prod) => prod.id > max ? prod.id : max, 0)
+
+  const producto = {
+    id:          maxId + 1,
+    category:    finalCategory,
+    name:        p.name.trim(),
+    description: p.description.trim(),
+    price:       Number(Number(p.price).toFixed(2)),
+    stock:       Number(p.stock),
+    image:       p.image.trim(),
+  }
+
+  products.value.push(producto)
+
+  // Si es categoría nueva, agregarla a la lista
+  if (!categories.includes(finalCategory)) {
+    categories.push(finalCategory)
+  }
+
+  saveProducts()
+  applyFilters()
+  closeModal()
+}
 
 // ── localStorage ──────────────────────────────────────────────────────────────
 
@@ -202,6 +518,17 @@ function saveProducts() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(products.value))
 }
 
+function resetStock() {
+  const defaultIds = new Set(defaultProducts.map(d => d.id))
+  products.value = products.value.map(p => {
+    if (!defaultIds.has(p.id)) return p  // productos manuales: intactos
+    const original = defaultProducts.find(d => d.id === p.id)
+    return { ...p, stock: original.stock }
+  })
+  saveProducts()
+  applyFilters()
+}
+
 // ── Filtros ───────────────────────────────────────────────────────────────────
 
 function applyFilters() {
@@ -212,7 +539,42 @@ function applyFilters() {
   })
 }
 
-// ── Carrito ───────────────────────────────────────────────────────────────────
+// ── Selección en la card (no toca el carrito) ────────────────────────────────
+
+function increaseSelected(product) {
+  const current = selected.value[product.id] || 0
+  if (current >= product.stock) return
+  selected.value[product.id] = current + 1
+}
+
+function decreaseSelected(product) {
+  const current = selected.value[product.id] || 0
+  if (current <= 0) return
+  selected.value[product.id] = current - 1
+}
+
+// ── Enviar al carrito (botón 🛒 de la card) ───────────────────────────────────
+
+function sendToCart(product) {
+  const qty = selected.value[product.id] || 0
+  if (qty <= 0) return
+
+  // Sumar al carrito
+  cart.value[product.id] = (cart.value[product.id] || 0) + qty
+
+  // Descontar stock del producto
+  const index = products.value.findIndex(p => p.id === product.id)
+  if (index !== -1) {
+    products.value[index].stock -= qty
+    saveProducts()
+    applyFilters() // refrescar filteredProducts con el stock actualizado
+  }
+
+  // Limpiar selección de esta card
+  selected.value[product.id] = 0
+}
+
+// ── Carrito (sidebar) ─────────────────────────────────────────────────────────
 
 function getCartTotal() {
   return Object.values(cart.value).reduce((sum, qty) => sum + qty, 0)
@@ -224,21 +586,33 @@ function getCartPrice() {
   }, 0).toFixed(2)
 }
 
-function addToCart(product) {
-  const current = cart.value[product.id] || 0
-  if (current >= product.stock) return
-  cart.value[product.id] = current + 1
-}
-
-function removeFromCart(product) {
+function removeFromSidebar(product) {
   const current = cart.value[product.id] || 0
   if (current <= 0) return
   cart.value[product.id] = current - 1
+
+  // Devolver 1 unidad al stock
+  const index = products.value.findIndex(p => p.id === product.id)
+  if (index !== -1) {
+    products.value[index].stock += 1
+    saveProducts()
+    applyFilters()
+  }
 }
 
-function registerProduct(product) {
-  console.log('Registrar producto:', product)
+function addFromSidebar(product) {
+  const stockDisponible = product.stock
+  if (stockDisponible <= 0) return
+  cart.value[product.id] = (cart.value[product.id] || 0) + 1
+
+  const index = products.value.findIndex(p => p.id === product.id)
+  if (index !== -1) {
+    products.value[index].stock -= 1
+    saveProducts()
+    applyFilters()
+  }
 }
+
 </script>
 
 <style>
@@ -515,7 +889,11 @@ body {
   margin-bottom: 1.5rem;
 }
 
-.productos { display: flex; flex-wrap: wrap; gap: 2rem; }
+.productos {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 1.5rem;
+}
 
 .no-results {
   display: flex;
@@ -524,7 +902,7 @@ body {
   gap: 0.75rem;
   color: #aaa;
   padding: 4rem 0;
-  width: 100%;
+  grid-column: 1 / -1;
 }
 .no-results span { font-size: 3rem; }
 .no-results p { font-size: 1rem; font-weight: 600; }
@@ -535,8 +913,8 @@ body {
   background: #ffffff;
   border-radius: 20px;
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
-  width: 220px;
-  height: 340px;
+  width: 100%;
+  height: 390px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -565,6 +943,20 @@ body {
 }
 .btn-cart:hover { background: #f0faf0; border-color: #57a857; transform: scale(1.08); }
 .btn-cart:active { transform: scale(0.93); }
+.btn-cart:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+.btn-cart-active {
+  background: #6abf69;
+  color: #fff;
+  border-color: #6abf69;
+}
+.btn-cart-active:hover { background: #57a857; border-color: #57a857; }
+
+.sin-stock-label {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #ccc;
+  padding: 6px 10px;
+}
 
 .image-wrapper {
   width: 120px;
@@ -594,16 +986,16 @@ body {
   justify-content: space-between;
 }
 
-.product-name { font-size: 1rem; font-weight: 700; color: #1a1a1a; text-align: center; }
-.product-description { font-size: 0.8rem; color: #888; text-align: center; line-height: 1.4; }
+.product-name { font-size: 1.15rem; font-weight: 700; color: #1a1a1a; text-align: center; }
+.product-description { font-size: 0.92rem; color: #888; text-align: center; line-height: 1.4; }
 
 .stock-badge {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 0.72rem;
+  font-size: 0.85rem;
   font-weight: 600;
-  padding: 3px 10px;
+  padding: 4px 12px;
   border-radius: 20px;
 }
 
@@ -625,12 +1017,12 @@ body {
 }
 
 .price {
-  font-size: 0.95rem;
+  font-size: 1.05rem;
   font-weight: 700;
   color: #333;
   border: 1.5px solid #ddd;
   border-radius: 20px;
-  padding: 4px 14px;
+  padding: 5px 16px;
   white-space: nowrap;
 }
 
@@ -639,8 +1031,8 @@ body {
   color: #fff;
   border: none;
   border-radius: 20px;
-  padding: 6px 18px;
-  font-size: 0.85rem;
+  padding: 7px 20px;
+  font-size: 0.95rem;
   font-weight: 700;
   cursor: pointer;
   transition: background 0.2s, transform 0.1s;
@@ -686,5 +1078,500 @@ body {
   color: #333;
   min-width: 18px;
   text-align: center;
+}
+
+/* ── RESPONSIVIDAD ─────────────────────────────────────────── */
+
+/* Tablet grande — 4 columnas */
+@media (max-width: 1200px) {
+  .productos {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+/* Tablet — 3 columnas */
+@media (max-width: 900px) {
+  .productos {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .header {
+    padding: 0.75rem 1.25rem 0;
+  }
+
+  .sidebar {
+    width: 300px;
+  }
+}
+
+/* Móvil grande — 2 columnas */
+@media (max-width: 600px) {
+  .productos {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1rem;
+  }
+
+  .card {
+    height: auto;
+    min-height: 320px;
+  }
+
+  /* Header en 2 filas */
+  .header {
+    padding: 0.75rem 1rem 0;
+  }
+
+  .header-top {
+    flex-wrap: wrap;
+    gap: 0.6rem;
+  }
+
+  /* Fila 1: logo a la izquierda, carrito a la derecha */
+  .logo {
+    order: 1;
+    flex: 1;
+  }
+
+  .cart-btn {
+    order: 2;
+    width: 42px;
+    height: 42px;
+    font-size: 1.1rem;
+  }
+
+  /* Fila 2: buscador ocupa todo el ancho */
+  .search-wrapper {
+    order: 3;
+    width: 100%;
+    flex: none;
+    height: 42px;
+    margin-bottom: 0.2rem;
+  }
+
+  .logo-img { height: 44px; }
+
+  .comida { padding: 1rem; }
+  .comida h1 { font-size: 1.3rem; }
+
+  .sidebar { width: 100vw; }
+
+  .pill {
+    padding: 8px 14px;
+    font-size: 0.82rem;
+  }
+}
+
+/* Móvil pequeño — 1 columna */
+@media (max-width: 420px) {
+  .productos {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+
+  .card {
+    height: auto;
+    min-height: 300px;
+  }
+
+  .image-wrapper {
+    width: 110px;
+    height: 110px;
+  }
+
+  .product-name { font-size: 1.05rem; }
+  .product-description { font-size: 0.88rem; }
+
+  .logo-img { height: 40px; }
+
+  .search-wrapper {
+    height: 40px;
+    padding: 0 0.75rem;
+  }
+
+  .search-input { font-size: 0.85rem; }
+
+  .cart-btn {
+    width: 40px;
+    height: 40px;
+  }
+
+  .comida h1 {
+    font-size: 1.15rem;
+    margin-bottom: 1rem;
+  }
+
+  /* Pills más fáciles de tocar */
+  .pill {
+    padding: 9px 14px;
+    font-size: 0.82rem;
+  }
+
+  .price { font-size: 0.95rem; }
+  .btn-add { font-size: 0.9rem; }
+}
+
+/* Mínimo absoluto — 300px */
+@media (max-width: 320px) {
+  .productos {
+    grid-template-columns: 1fr;
+    gap: 0.75rem;
+  }
+
+  .header { padding: 0.5rem 0.75rem 0; }
+  .logo-img { height: 34px; }
+
+  .cart-btn {
+    width: 36px;
+    height: 36px;
+    font-size: 0.95rem;
+  }
+
+  .search-wrapper { height: 38px; }
+
+  .comida { padding: 0.75rem; }
+
+  .price {
+    font-size: 0.88rem;
+    padding: 4px 10px;
+  }
+
+  .btn-add {
+    font-size: 0.82rem;
+    padding: 6px 10px;
+  }
+
+  .sidebar { width: 100vw; }
+}
+
+
+/* ── FAB ───────────────────────────────────────────────────── */
+
+.fab {
+  position: fixed;
+  bottom: 2rem;
+  right: 2rem;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: #6abf69;
+  color: #fff;
+  font-size: 2rem;
+  font-weight: 300;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 20px rgba(106, 191, 105, 0.5);
+  z-index: 150;
+  transition: background 0.2s, transform 0.15s;
+  line-height: 1;
+}
+.fab:hover { background: #57a857; transform: scale(1.08); }
+.fab:active { transform: scale(0.95); }
+
+.btn-reset-stock {
+  background: none;
+  border: 1.5px solid #ddd;
+  border-radius: 50%;
+  width: 40px;
+  height: 40px;
+  font-size: 1.1rem;
+  color: #999;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: border-color 0.2s, color 0.2s;
+}
+.btn-reset-stock:hover { border-color: #6abf69; color: #6abf69; }
+
+/* ── MODAL ─────────────────────────────────────────────────── */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.45);
+  z-index: 400;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+
+.modal {
+  background: #fff;
+  border-radius: 20px;
+  width: 100%;
+  max-width: 500px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.18);
+  overflow: hidden;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.25rem 1.5rem;
+  border-bottom: 1px solid #f0f0f0;
+  flex-shrink: 0;
+}
+.modal-header h2 { font-size: 1.1rem; font-weight: 800; color: #1a1a1a; }
+
+.modal-close {
+  background: none;
+  border: none;
+  font-size: 1.1rem;
+  cursor: pointer;
+  color: #888;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+}
+.modal-close:hover { background: #f5f5f5; color: #333; }
+
+.modal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1.25rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.field label {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #555;
+}
+
+.field input,
+.field textarea,
+.field select {
+  border: 1.5px solid #e0e0e0;
+  border-radius: 12px;
+  padding: 0.6rem 0.9rem;
+  font-size: 0.9rem;
+  color: #333;
+  outline: none;
+  font-family: inherit;
+  transition: border-color 0.2s;
+  background: #fafafa;
+}
+
+.field input:focus,
+.field textarea:focus,
+.field select:focus {
+  border-color: #6abf69;
+  background: #fff;
+}
+
+.field textarea { resize: vertical; min-height: 70px; }
+
+.field-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+.img-preview {
+  margin-top: 0.5rem;
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  border: 3px solid #6abf69;
+  overflow: hidden;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f4f4f4;
+}
+.img-preview img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.img-error { font-size: 0.75rem; color: #e53935; margin-top: 0.25rem; }
+
+.modal-error {
+  font-size: 0.82rem;
+  color: #e53935;
+  font-weight: 600;
+  background: #fdecea;
+  padding: 8px 12px;
+  border-radius: 10px;
+}
+
+.modal-footer {
+  display: flex;
+  gap: 0.75rem;
+  padding: 1rem 1.5rem;
+  border-top: 1px solid #f0f0f0;
+  flex-shrink: 0;
+}
+
+.btn-cancel {
+  flex: 1;
+  background: #f0f0f0;
+  color: #555;
+  border: none;
+  border-radius: 20px;
+  padding: 10px;
+  font-size: 0.9rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.btn-cancel:hover { background: #e0e0e0; }
+
+.btn-save {
+  flex: 2;
+  background: #6abf69;
+  color: #fff;
+  border: none;
+  border-radius: 20px;
+  padding: 10px;
+  font-size: 0.9rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.btn-save:hover { background: #57a857; }
+
+@media (max-width: 420px) {
+  .fab { bottom: 1.25rem; right: 1.25rem; width: 50px; height: 50px; font-size: 1.8rem; }
+  .field-row { grid-template-columns: 1fr; }
+}
+
+/* ── FACTURA ───────────────────────────────────────────────── */
+
+.modal-factura { max-width: 520px; }
+
+.factura-body { background: #fafafa; }
+
+.factura {
+  background: #fff;
+  border-radius: 16px;
+  padding: 1.5rem;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.factura-logo img {
+  height: 52px;
+  width: auto;
+  object-fit: contain;
+}
+
+.factura-title {
+  font-size: 1.4rem;
+  font-weight: 800;
+  color: #1a1a1a;
+  margin: 0;
+}
+
+.factura-sub {
+  font-size: 0.85rem;
+  color: #888;
+  margin: 0;
+}
+
+.factura-fecha {
+  font-size: 0.8rem;
+  color: #aaa;
+  margin: 0;
+}
+
+.factura-divider {
+  width: 100%;
+  height: 2px;
+  background: linear-gradient(to right, #6abf69, #bdffb0);
+  border-radius: 2px;
+  margin: 0.25rem 0;
+}
+
+.factura-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.factura-table thead tr {
+  background: #f0faf0;
+}
+
+.factura-table th {
+  padding: 8px 10px;
+  text-align: left;
+  font-weight: 700;
+  color: #2e7d32;
+  font-size: 0.8rem;
+}
+
+.factura-table td {
+  padding: 7px 10px;
+  color: #333;
+  border-bottom: 1px solid #f5f5f5;
+}
+
+.factura-table td.center { text-align: center; }
+.factura-table td.right  { text-align: right; }
+
+.factura-total-row {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.25rem 0;
+}
+
+.factura-total-row span:first-child {
+  font-size: 1rem;
+  font-weight: 700;
+  color: #1a1a1a;
+}
+
+.factura-total-valor {
+  font-size: 1.3rem;
+  font-weight: 800;
+  color: #6abf69;
+}
+
+.factura-gracias {
+  font-size: 0.85rem;
+  color: #aaa;
+  margin-top: 0.25rem;
+}
+
+/* ── TOAST ─────────────────────────────────────────────────── */
+
+.toast {
+  position: fixed;
+  bottom: 2rem;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #1a1a1a;
+  color: #fff;
+  padding: 0.75rem 1.5rem;
+  border-radius: 30px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  z-index: 500;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+  white-space: nowrap;
 }
 </style>
