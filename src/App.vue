@@ -1,12 +1,96 @@
 <template>
   <div class="todo">
-    <div class="encabezado">Bienvenido</div>
 
-    <div class="comida">
-      <h1>Comidas</h1>
+    <!-- ── HEADER ────────────────────────────────────────────── -->
+    <header class="header">
+      <div class="header-top">
+
+        <div class="logo">
+          <img src="/logo.png" alt="FoodApp" class="logo-img" />
+        </div>
+
+        <div class="search-wrapper">
+          <span class="search-icon">🔍</span>
+          <input
+            class="search-input"
+            v-model="searchQuery"
+            @input="applyFilters"
+            placeholder="Buscar comida..."
+          />
+          <button class="search-clear" v-if="searchQuery" @click="searchQuery = ''; applyFilters()">✕</button>
+        </div>
+
+        <button class="cart-btn" @click="cartOpen = true">
+          🛒
+          <span class="cart-badge" v-if="getCartTotal() > 0">{{ getCartTotal() }}</span>
+        </button>
+      </div>
+
+      <div class="categories">
+        <button
+          class="pill"
+          :class="activeCategory === '' ? 'pill-active' : ''"
+          @click="activeCategory = ''; applyFilters()"
+        >Todas</button>
+        <button
+          v-for="cat in categories"
+          :key="cat"
+          class="pill"
+          :class="activeCategory === cat ? 'pill-active' : ''"
+          @click="activeCategory = cat; applyFilters()"
+        >{{ cat }}</button>
+      </div>
+    </header>
+
+    <!-- ── OVERLAY + SIDEBAR ──────────────────────────────────── -->
+    <div class="overlay" v-if="cartOpen" @click="cartOpen = false"></div>
+
+    <aside class="sidebar" :class="cartOpen ? 'sidebar-open' : ''">
+      <div class="sidebar-header">
+        <h2>Tu pedido</h2>
+        <button class="sidebar-close" @click="cartOpen = false">✕</button>
+      </div>
+
+      <div class="sidebar-empty" v-if="getCartTotal() === 0">
+        <span>🛒</span>
+        <p>Tu carrito está vacío</p>
+      </div>
+
+      <div class="sidebar-items" v-if="getCartTotal() > 0">
+        <div
+          v-for="product in products"
+          :key="product.id"
+          class="sidebar-item"
+          v-show="cart[product.id] > 0"
+        >
+          <img :src="product.image" :alt="product.name" class="sidebar-img" />
+          <div class="sidebar-info">
+            <p class="sidebar-name">{{ product.name }}</p>
+            <p class="sidebar-price">${{ (product.price * (cart[product.id] || 0)).toFixed(2) }}</p>
+          </div>
+          <div class="sidebar-qty">
+            <button class="qty-btn" @click="removeFromCart(product)">−</button>
+            <span>{{ cart[product.id] }}</span>
+            <button class="qty-btn" @click="addToCart(product)" :disabled="cart[product.id] >= product.stock">+</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="sidebar-footer" v-if="getCartTotal() > 0">
+        <div class="sidebar-total">
+          <span>Total</span>
+          <span>${{ getCartPrice() }}</span>
+        </div>
+        <button class="btn-checkout">Generar factura</button>
+      </div>
+    </aside>
+
+    <!-- ── PRODUCTOS ──────────────────────────────────────────── -->
+    <main class="comida">
+      <h1>{{ activeCategory || 'Todas las comidas' }}</h1>
 
       <div class="productos">
-        <div class="card" v-for="product in products" :key="product.id">
+        <div class="card" v-for="product in filteredProducts" :key="product.id">
 
           <button class="btn-cart" @click="registerProduct(product)">🛒</button>
 
@@ -20,10 +104,7 @@
 
             <div
               class="stock-badge"
-              :class="
-                product.stock === 0 ? 'stock-out' :
-                product.stock <= 5  ? 'stock-low' : 'stock-ok'
-              "
+              :class="product.stock === 0 ? 'stock-out' : product.stock <= 5 ? 'stock-low' : 'stock-ok'"
             >
               <span class="stock-dot"></span>
               <span v-if="product.stock === 0">Sin stock</span>
@@ -37,27 +118,24 @@
               <div class="quantity-controls" v-if="cart[product.id] > 0">
                 <button class="qty-btn" @click="removeFromCart(product)">−</button>
                 <span class="qty-count">{{ cart[product.id] }}</span>
-                <button
-                  class="qty-btn"
-                  @click="addToCart(product)"
-                  :disabled="cart[product.id] >= product.stock"
-                >+</button>
+                <button class="qty-btn" @click="addToCart(product)" :disabled="cart[product.id] >= product.stock">+</button>
               </div>
 
-              <button
-                v-else
-                class="btn-add"
-                @click="addToCart(product)"
-                :disabled="product.stock === 0"
-              >
+              <button v-else class="btn-add" @click="addToCart(product)" :disabled="product.stock === 0">
                 {{ product.stock === 0 ? 'Sin stock' : 'Agregar' }}
               </button>
             </div>
           </div>
 
         </div>
+
+        <div class="no-results" v-if="filteredProducts.length === 0">
+          <span>🍽️</span>
+          <p>No se encontraron productos</p>
+        </div>
       </div>
-    </div>
+    </main>
+
   </div>
 </template>
 
@@ -99,6 +177,16 @@ const defaultProducts = [
   { id: 30, category: 'Acompañamientos', name: 'Alitas BBQ (x6)',            description: 'Alitas de pollo asadas y bañadas en salsa BBQ casera ahumada.',                 price: 5.50,  stock: 13, image: 'https://images.unsplash.com/photo-1567620832903-9fc6debc209f?w=400&h=400&fit=crop' },
 ]
 
+// ── Estado — declarado PRIMERO para que todo lo de abajo pueda usarlo ─────────
+
+const products       = ref(loadProducts())
+const filteredProducts = ref([...products.value])
+const cart           = ref({})
+const searchQuery    = ref('')
+const activeCategory = ref('')
+const cartOpen       = ref(false)
+const categories     = [...new Set(defaultProducts.map(p => p.category))]
+
 // ── localStorage ──────────────────────────────────────────────────────────────
 
 function loadProducts() {
@@ -114,12 +202,27 @@ function saveProducts() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(products.value))
 }
 
-// ── Estado ────────────────────────────────────────────────────────────────────
+// ── Filtros ───────────────────────────────────────────────────────────────────
 
-const products = ref(loadProducts())
-const cart = ref({})          // { [productId]: cantidad }
+function applyFilters() {
+  filteredProducts.value = products.value.filter(p => {
+    const matchCat    = activeCategory.value === '' || p.category === activeCategory.value
+    const matchSearch = p.name.toLowerCase().includes(searchQuery.value.toLowerCase())
+    return matchCat && matchSearch
+  })
+}
 
 // ── Carrito ───────────────────────────────────────────────────────────────────
+
+function getCartTotal() {
+  return Object.values(cart.value).reduce((sum, qty) => sum + qty, 0)
+}
+
+function getCartPrice() {
+  return products.value.reduce((total, p) => {
+    return total + (p.price * (cart.value[p.id] || 0))
+  }, 0).toFixed(2)
+}
 
 function addToCart(product) {
   const current = cart.value[product.id] || 0
@@ -127,15 +230,14 @@ function addToCart(product) {
   cart.value[product.id] = current + 1
 }
 
-function registerProduct(product) {
-  // listo para implementar más adelante
-  console.log('Registrar producto:', product)
-}
-
 function removeFromCart(product) {
   const current = cart.value[product.id] || 0
   if (current <= 0) return
   cart.value[product.id] = current - 1
+}
+
+function registerProduct(product) {
+  console.log('Registrar producto:', product)
 }
 </script>
 
@@ -151,16 +253,260 @@ body {
   font-family: 'Nunito', 'Segoe UI', sans-serif;
 }
 
-.todo {
-  padding: 2rem;
+.todo { min-height: 100vh; }
+
+/* ── HEADER ────────────────────────────────────────────────── */
+
+.header {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: #ffffff;
+  box-shadow: 0 2px 16px rgba(0,0,0,0.08);
+  padding: 1rem 2rem 0;
 }
 
-.encabezado {
-  font-size: 1.4rem;
+.header-top {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  padding-bottom: 1rem;
+}
+
+.logo { display: flex; align-items: center; flex-shrink: 0; }
+.logo-img { height: 64px; width: auto; object-fit: contain; }
+
+.search-wrapper {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  background: #f5f5f5;
+  border-radius: 30px;
+  padding: 0 1rem;
+  gap: 0.5rem;
+  border: 1.5px solid #e8e8e8;
+  transition: border-color 0.2s;
+  height: 44px;
+}
+.search-wrapper:focus-within { border-color: #6abf69; }
+
+.search-icon { font-size: 0.9rem; color: #aaa; }
+
+.search-input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  font-size: 0.9rem;
+  color: #333;
+  outline: none;
+}
+
+.search-clear {
+  background: none;
+  border: none;
+  color: #aaa;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+.search-clear:hover { color: #555; }
+
+.cart-btn {
+  position: relative;
+  background: #6abf69;
+  border: none;
+  border-radius: 50%;
+  width: 44px;
+  height: 44px;
+  font-size: 1.2rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.2s, transform 0.1s;
+  box-shadow: 0 2px 10px rgba(106,191,105,0.35);
+}
+.cart-btn:hover { background: #57a857; }
+.cart-btn:active { transform: scale(0.93); }
+
+.cart-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  background: #e53935;
+  color: #fff;
+  font-size: 0.65rem;
+  font-weight: 800;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid #fff;
+}
+
+.categories {
+  display: flex;
+  gap: 0.5rem;
+  overflow-x: auto;
+  padding-bottom: 0.9rem;
+  scrollbar-width: none;
+  border-top: 1px solid #eee;
+  padding-top: 0.6rem;
+}
+.categories::-webkit-scrollbar { display: none; }
+
+.pill {
+  flex-shrink: 0;
+  background: #f0f0f0;
+  border: none;
+  border-radius: 20px;
+  padding: 6px 16px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #555;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.pill:hover { background: #e0f2e0; color: #2e7d32; }
+.pill-active { background: #6abf69; color: #fff; }
+.pill-active:hover { background: #57a857; color: #fff; }
+
+/* ── SIDEBAR ───────────────────────────────────────────────── */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.35);
+  z-index: 200;
+}
+
+.sidebar {
+  position: fixed;
+  top: 0;
+  right: 0;
+  height: 100vh;
+  width: 340px;
+  background: #fff;
+  z-index: 300;
+  display: flex;
+  flex-direction: column;
+  box-shadow: -4px 0 24px rgba(0,0,0,0.12);
+  transform: translateX(100%);
+  transition: transform 0.3s ease;
+}
+.sidebar-open { transform: translateX(0); }
+
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.25rem 1.5rem;
+  border-bottom: 1px solid #f0f0f0;
+}
+.sidebar-header h2 { font-size: 1.1rem; font-weight: 800; color: #1a1a1a; }
+
+.sidebar-close {
+  background: none;
+  border: none;
+  font-size: 1.1rem;
+  cursor: pointer;
+  color: #888;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+}
+.sidebar-close:hover { background: #f5f5f5; color: #333; }
+
+.sidebar-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  color: #aaa;
+}
+.sidebar-empty span { font-size: 3rem; }
+.sidebar-empty p { font-size: 0.95rem; font-weight: 600; }
+
+.sidebar-items {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.sidebar-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.sidebar-img {
+  width: 52px;
+  height: 52px;
+  border-radius: 12px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.sidebar-info { flex: 1; }
+.sidebar-name { font-size: 0.85rem; font-weight: 700; color: #1a1a1a; }
+.sidebar-price { font-size: 0.82rem; color: #6abf69; font-weight: 700; }
+
+.sidebar-qty {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: #f5f5f5;
+  border-radius: 20px;
+  padding: 4px 8px;
+  font-size: 0.9rem;
   font-weight: 700;
-  margin-bottom: 1rem;
   color: #333;
 }
+
+.sidebar-footer {
+  padding: 1.25rem 1.5rem;
+  border-top: 1px solid #f0f0f0;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.sidebar-total {
+  display: flex;
+  justify-content: space-between;
+  font-size: 1rem;
+  font-weight: 800;
+  color: #1a1a1a;
+}
+
+.btn-checkout {
+  background: #6abf69;
+  color: #fff;
+  border: none;
+  border-radius: 20px;
+  padding: 12px;
+  font-size: 0.95rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.2s;
+  width: 100%;
+}
+.btn-checkout:hover { background: #57a857; }
+
+/* ── PRODUCTOS ─────────────────────────────────────────────── */
+
+.comida { padding: 2rem; }
 
 .comida h1 {
   font-size: 1.6rem;
@@ -169,11 +515,19 @@ body {
   margin-bottom: 1.5rem;
 }
 
-.productos {
+.productos { display: flex; flex-wrap: wrap; gap: 2rem; }
+
+.no-results {
   display: flex;
-  flex-wrap: wrap;
-  gap: 2rem;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  color: #aaa;
+  padding: 4rem 0;
+  width: 100%;
 }
+.no-results span { font-size: 3rem; }
+.no-results p { font-size: 1rem; font-weight: 600; }
 
 /* ── Card ──────────────────────────────────────────────────── */
 
@@ -182,6 +536,7 @@ body {
   border-radius: 20px;
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
   width: 220px;
+  height: 340px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -208,14 +563,8 @@ body {
   transition: background 0.2s, border-color 0.2s, transform 0.1s;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
 }
-
-.btn-cart:hover {
-  background: #f0faf0;
-  border-color: #57a857;
-  transform: scale(1.08);
-}
+.btn-cart:hover { background: #f0faf0; border-color: #57a857; transform: scale(1.08); }
 .btn-cart:active { transform: scale(0.93); }
-
 
 .image-wrapper {
   width: 120px;
@@ -241,23 +590,12 @@ body {
   flex-direction: column;
   align-items: center;
   gap: 0.4rem;
+  flex: 1;
+  justify-content: space-between;
 }
 
-.product-name {
-  font-size: 1rem;
-  font-weight: 700;
-  color: #1a1a1a;
-  text-align: center;
-}
-
-.product-description {
-  font-size: 0.8rem;
-  color: #888;
-  text-align: center;
-  line-height: 1.4;
-}
-
-/* ── Stock badge ───────────────────────────────────────────── */
+.product-name { font-size: 1rem; font-weight: 700; color: #1a1a1a; text-align: center; }
+.product-description { font-size: 0.8rem; color: #888; text-align: center; line-height: 1.4; }
 
 .stock-badge {
   display: inline-flex;
@@ -269,12 +607,7 @@ body {
   border-radius: 20px;
 }
 
-.stock-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
+.stock-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
 
 .stock-ok  { background: #e8f5e9; color: #2e7d32; }
 .stock-ok  .stock-dot { background: #4caf50; }
@@ -283,14 +616,11 @@ body {
 .stock-out { background: #fdecea; color: #c62828; }
 .stock-out .stock-dot { background: #ef5350; }
 
-/* ── Price row ─────────────────────────────────────────────── */
-
 .price-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  margin-top: 0.5rem;
   gap: 0.5rem;
 }
 
@@ -316,12 +646,9 @@ body {
   transition: background 0.2s, transform 0.1s;
   flex: 1;
 }
-
 .btn-add:hover:not(:disabled) { background: #57a857; }
 .btn-add:active:not(:disabled) { transform: scale(0.97); }
 .btn-add:disabled { background: #ccc; cursor: not-allowed; }
-
-/* ── Quantity controls ─────────────────────────────────────── */
 
 .quantity-controls {
   display: flex;
@@ -349,7 +676,6 @@ body {
   justify-content: center;
   transition: background 0.15s, transform 0.1s;
 }
-
 .qty-btn:hover:not(:disabled) { background: #57a857; }
 .qty-btn:active:not(:disabled) { transform: scale(0.93); }
 .qty-btn:disabled { background: #bbb; cursor: not-allowed; }
